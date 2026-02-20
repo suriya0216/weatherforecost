@@ -217,6 +217,9 @@ def build_personalized_response(
     aqi_payload: dict,
     routine: RoutineProfile,
     preferences: UserPreferences,
+    satellite_payload: dict | None = None,
+    forecast_diagnostics: dict | None = None,
+    weather_alerts: list[dict] | None = None,
 ) -> dict:
     current = weather_payload["current"]
     hourly_rows = _build_hourly_table(weather_payload, aqi_payload)
@@ -241,6 +244,20 @@ def build_personalized_response(
 
     recommended_actions = [item["action"] for item in routine_insights]
     recommended_actions.append(activity_window["reason"])
+
+    alert_actions = _build_alert_actions(weather_alerts or [])
+    recommended_actions.extend(alert_actions)
+
+    if satellite_payload:
+        satellite_note = _build_satellite_action_note(satellite_payload=satellite_payload)
+        if satellite_note:
+            recommended_actions.append(satellite_note)
+
+    forecast_quality = _build_forecast_quality(
+        forecast_diagnostics=forecast_diagnostics,
+        satellite_payload=satellite_payload,
+        weather_alerts=weather_alerts or [],
+    )
 
     return {
         "location": {
@@ -270,5 +287,78 @@ def build_personalized_response(
         "insights": routine_insights,
         "activity_windows": [activity_window],
         "recommended_actions": recommended_actions,
+        "satellite": satellite_payload,
+        "forecast_quality": forecast_quality,
+        "alerts": weather_alerts or [],
     }
+
+
+def _build_forecast_quality(
+    *,
+    forecast_diagnostics: dict | None,
+    satellite_payload: dict | None,
+    weather_alerts: list[dict],
+) -> dict:
+    diagnostics = dict(forecast_diagnostics or {})
+    base_score = float(diagnostics.get("confidence_score", 50))
+    adjusted_score = base_score
+
+    data_age = satellite_payload.get("data_age_hours") if satellite_payload else None
+    if isinstance(data_age, (float, int)):
+        if data_age <= 72:
+            adjusted_score += 3
+        elif data_age > 240:
+            adjusted_score -= 8
+
+    high_alert_count = 0
+    for alert in weather_alerts:
+        severity = str(alert.get("severity") or "").lower()
+        if severity in {"extreme", "severe"}:
+            high_alert_count += 1
+
+    if high_alert_count:
+        adjusted_score -= min(10, high_alert_count * 3)
+
+    score = int(max(20, min(98, round(adjusted_score))))
+    diagnostics["confidence_score"] = score
+    diagnostics["confidence_level"] = _confidence_level(score)
+    diagnostics["high_severity_alerts"] = high_alert_count
+    diagnostics["satellite_data_age_hours"] = round(float(data_age), 1) if isinstance(data_age, (int, float)) else None
+    return diagnostics
+
+
+def _build_alert_actions(weather_alerts: list[dict]) -> list[str]:
+    actions: list[str] = []
+    for alert in weather_alerts[:2]:
+        event = alert.get("event")
+        severity = str(alert.get("severity") or "unknown").lower()
+        if not event:
+            continue
+        if severity in {"extreme", "severe"}:
+            actions.append(f"{event}: high-risk alert active. Adjust outdoor plans immediately.")
+        elif severity == "moderate":
+            actions.append(f"{event}: moderate alert in area. Keep contingency plans ready.")
+    return actions
+
+
+def _confidence_level(score: int) -> str:
+    if score >= 75:
+        return "high"
+    if score >= 55:
+        return "moderate"
+    return "low"
+
+
+def _build_satellite_action_note(*, satellite_payload: dict) -> str | None:
+    cloud_cover = satellite_payload.get("cloud_cover_percent")
+    data_age = satellite_payload.get("data_age_hours")
+    if cloud_cover is None:
+        return None
+
+    freshness = "fresh" if isinstance(data_age, (int, float)) and data_age <= 72 else "historical"
+    if cloud_cover >= 80:
+        return f"Satellite ({freshness}) shows dense cloud cover. Expect lower UV and possible rain persistence."
+    if cloud_cover <= 20:
+        return f"Satellite ({freshness}) shows clear skies. UV may rise quickly during daylight hours."
+    return f"Satellite ({freshness}) indicates mixed cloud conditions. Keep routine plans flexible."
 

@@ -40,3 +40,40 @@ class PersonalizedForecastRequest(BaseModel):
             raise ValueError("Provide either location_query or location coordinates.")
         return self
 
+
+class MLTrainRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    location_query: str | None = Field(
+        default=None,
+        description="City or region text to geocode if coordinates are not provided.",
+    )
+    location: Coordinates | None = None
+    history_days: int = Field(default=180, ge=30, le=3650)
+    epochs: int = Field(default=50, ge=5, le=300)
+    force_retrain: bool = False
+    min_retrain_hours: int = Field(default=6, ge=1, le=168)
+
+    @model_validator(mode="after")
+    def validate_location_inputs(self) -> "MLTrainRequest":
+        if self.location is None and (self.location_query is None or not self.location_query.strip()):
+            raise ValueError("Provide either location_query or location coordinates.")
+        return self
+
+
+class MLPredictRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    location_query: str | None = Field(
+        default=None,
+        description="City or region text to geocode if coordinates are not provided.",
+    )
+    location: Coordinates | None = None
+    horizon_hours: int = Field(default=24, ge=1, le=72)
+
+    @model_validator(mode="after")
+    def validate_location_inputs(self) -> "MLPredictRequest":
+        if self.location is None and (self.location_query is None or not self.location_query.strip()):
+            raise ValueError("Provide either location_query or location coordinates.")
+        return self
+

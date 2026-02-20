@@ -4,6 +4,11 @@ Modern full-stack weather forecast platform with:
 - Premium React + Tailwind landing/dashboard UI
 - FastAPI backend
 - Live Open-Meteo forecast + AQI integration
+- Multi-model ensemble backend (best_match + GFS + ECMWF + ICON)
+- Forecast confidence scoring with model spread diagnostics
+- Optional satellite context (NASA POWER) and weather alert ingestion (NWS)
+- AI model pipeline (LSTM + Random Forest + XGBoost ensemble)
+- SQLite logging for model training runs and prediction traces
 - Personalized routine-aware recommendation engine
 
 ## Project Structure
@@ -18,8 +23,10 @@ wethar forcast/
       services/
         weather_client.py
         personalizer.py
+        ml_engine.py
     tests/
       test_personalizer.py
+      test_ml_routes.py
     requirements.txt
   src/
     api/weatherApi.js
@@ -83,6 +90,9 @@ python -m uvicorn app.main:app --reload --port 8000 --app-dir backend --env-file
 Backend URLs:
 - Health: `http://localhost:8000/api/health`
 - Personalized forecast: `POST http://localhost:8000/api/forecast/personalized`
+- ML train: `POST http://localhost:8000/api/ml/train`
+- ML predict: `POST http://localhost:8000/api/ml/predict`
+- ML metrics: `GET http://localhost:8000/api/ml/metrics`
 
 ## 3) Frontend Setup Only (React + Vite)
 
@@ -125,6 +135,20 @@ Open:
 
 ## 5) API Contract
 
+### `GET /api/geocode?query=<text>`
+
+Location search endpoint for menu/autocomplete.
+
+Returns:
+- `results[]` with `name`, `admin1`, `country`, `latitude`, `longitude`, `timezone`
+
+### `GET /api/geocode/reverse?latitude=<lat>&longitude=<lon>`
+
+Reverse geocode endpoint used by **Use My Location**.
+
+Returns:
+- `result` with `name`, `admin1`, `country`, `latitude`, `longitude`, `timezone`
+
 ### `POST /api/forecast/personalized`
 
 Request example:
@@ -155,6 +179,53 @@ Response includes:
 - `insights` (routine-aware)
 - `activity_windows`
 - `recommended_actions`
+- `forecast_quality` (confidence score, model count, spread, provider diagnostics)
+- `satellite` (latest available satellite-derived atmospheric context)
+- `alerts` (active weather alerts when available)
+
+### `POST /api/ml/train`
+
+Triggers AI model training on historical weather data for a location.
+
+Request example:
+
+```json
+{
+  "location_query": "Chennai, Tamil Nadu, India",
+  "history_days": 180,
+  "epochs": 50,
+  "force_retrain": true
+}
+```
+
+Response includes:
+- `status`
+- `best_model`
+- `metrics` (MAE, RMSE, Accuracy within 2C)
+- `sample_count`
+- `trained_at_utc`
+
+### `POST /api/ml/predict`
+
+Returns AI-predicted hourly temperature forecast + confidence/anomaly/storm alert score.
+
+Request example:
+
+```json
+{
+  "location_query": "Chennai, Tamil Nadu, India",
+  "horizon_hours": 24
+}
+```
+
+Response includes:
+- `summary` (confidence, anomaly score, storm alert level)
+- `predictions` (hourly predicted temperature + per-model outputs)
+- `training_metrics`
+
+### `GET /api/ml/metrics`
+
+Returns currently loaded model status and training/prediction log counters.
 
 ## 6) Verification Commands
 
@@ -176,6 +247,7 @@ python -m pytest
 ## 7) Notes
 
 - Weather and geocoding data are fetched from Open-Meteo APIs.
+- LSTM uses TensorFlow when available. If TensorFlow is not installed, the service uses an MLP fallback with the same API shape.
 - If backend is not running, UI still renders design and shows offline API status.
 - This implementation is production-style starter architecture and ready for next phase:
   auth, user profiles, persistent storage, and model retraining pipeline.
